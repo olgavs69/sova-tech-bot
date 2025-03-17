@@ -36,11 +36,11 @@ weekdays_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Воскресенье", callback_data="day_6")]
         ])
 
-
 def get_action_report_markup(report_type: str) -> types.InlineKeyboardMarkup:
     """Создаём клавиатуру для выбора действия (сформировать отчёт сейчас или подписаться на рассылку)"""
     inline_kb = [
-        [types.InlineKeyboardButton(text="Сформировать отчёт сейчас", callback_data=f"generate_now_{report_type}")],
+        [types.InlineKeyboardButton(text="Сформировать текстовый отчёт сейчас", callback_data=f"generate_text_{report_type}")],
+        [types.InlineKeyboardButton(text="Сформировать отчёт-файл сейчас", callback_data=f"generate_now_{report_type}")],
         [types.InlineKeyboardButton(text="Подписаться на рассылку", callback_data=f"subscribe_{report_type}")]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=inline_kb)
@@ -60,6 +60,31 @@ def get_report_markup() -> types.InlineKeyboardMarkup:
                                     callback_data='report_food_cost_dynamics')]
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=inline_kb)
+
+
+def get_report_markup() -> types.InlineKeyboardMarkup:
+    """Создаём клавиатуру для выбора типа отчёта"""
+    inline_kb = [
+        [types.InlineKeyboardButton(text='Анализ выручки', callback_data='report_revenue_analysis')],
+        [types.InlineKeyboardButton(text='Товарооборот', callback_data='report_turnover')],
+        [types.InlineKeyboardButton(text='Товарооборот (для различных объектов)',
+                                    callback_data='report_turnover_by_objects')],
+        [types.InlineKeyboardButton(text='Прогнозирование потерь для товаров', callback_data='report_loss_forecast')],
+        [types.InlineKeyboardButton(text='Инвентаризация на складе', callback_data='report_inventory')],
+        [types.InlineKeyboardButton(text='Себестоимость продуктов', callback_data='report_food_cost')],
+        [types.InlineKeyboardButton(text='Себестоимость продуктов (с изменениями)',
+                                    callback_data='report_food_cost_dynamics')],
+        # Дополнительные кнопки
+        [types.InlineKeyboardButton(text="Выручка (текстовый отчёт)", callback_data="text_report_revenue")],
+        [types.InlineKeyboardButton(text="Потери (текстовый отчёт)", callback_data="text_report_losses")],
+        [types.InlineKeyboardButton(text="Закупки (текстовый отчёт)", callback_data="text_report_purchases")],
+        [types.InlineKeyboardButton(text="Фудкост (текстовый отчёт)", callback_data="text_report_food_cost")],
+        [types.InlineKeyboardButton(text="Оборачиваемость остатков (текстовый отчёт)", callback_data="text_report_turnover")],
+        [types.InlineKeyboardButton(text="Антивор (текстовый отчёт)", callback_data="text_report_antitheft")]
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=inline_kb)
+
+
 
 
 def get_format_markup(report_type: str) -> types.InlineKeyboardMarkup:

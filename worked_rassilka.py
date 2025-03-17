@@ -8,9 +8,13 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, callback_query
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 import asyncpg
 from datetime import datetime, time
+
+from apscheduler.triggers.interval import IntervalTrigger
 
 import config as cf
 from src.mailing.data.notification.notification_google_sheets_worker import notification_gsworker
@@ -19,6 +23,9 @@ from src.sound_and_text_ai.ai_answers import ai_answer
 
 from src.mailing.notifications.keyboards import periodicity_kb, timezone_kb, weekdays_kb
 
+from src.basic.revenue_analysis.graphics_for_pdf import handle_format_pdf
+from src.basic.revenue_analysis.make_excel import handle_format_excel
+
 # Настройка бота
 bot = Bot(token=cf.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -26,6 +33,7 @@ dp = Dispatcher()
 # Множество пользователей, ожидающих ввода
 waiting_for_question = set()
 
+scheduler = AsyncIOScheduler()
 
 # Класс состояний для FSM
 class MailingStates(StatesGroup):
@@ -83,6 +91,78 @@ logging.basicConfig(level=logging.INFO)
 
 # Создание роутера и диспетчера
 router = Router(name=__name__)
+
+async def get_subscriptions_from_db():
+    conn = await asyncpg.connect(**DB_CONFIG)
+    try:
+        # Получаем все подписки, которые активны
+        result = await conn.fetch('''
+            SELECT user_id, subscription_type, periodicity, weekday, day_of_month, time, timezone_offset, report_type, token 
+            FROM subscriptions WHERE periodicity = 'daily' OR periodicity = 'weekly' OR periodicity = 'monthly';
+        ''')
+        return result
+    except Exception as e:
+        logging.error(f"Failed to get subscriptions: {e}")
+        return []
+    finally:
+        await conn.close()
+
+
+# Функция для добавления задачи в планировщик
+async def add_subscription_task(user_id, sub_type, time_obj, report_type):
+    # Разбираем time_obj на составляющие (например, час и минуту)
+    hour, minute = time_obj.hour, time_obj.minute
+
+    # Создаём cron-триггер, который будет запускать задачу в указанное время
+    scheduler.add_job(
+        send_report,
+        CronTrigger(hour=hour, minute=minute),  # Запуск в указанное время
+        args=[user_id, report_type],  # Передаем параметры задачи
+        id=f"report_{user_id}_{sub_type}_{hour}_{minute}",  # Уникальный id для задания
+        replace_existing=True  # Если задача с таким ID уже существует, она будет заменена
+    )
+    logging.info(f"Scheduled subscription task for user {user_id} at {hour}:{minute} for {sub_type} report.")
+
+
+# Функция для отправки отчёта (например, PDF или Excel)
+async def send_report(user_id, report_type):
+    # Здесь должна быть логика формирования отчёта и отправки
+    logging.info(f"Sending {report_type} report for user {user_id}")
+    # Например, использовать обработчики для формата отчёта:
+    if report_type == 'pdf':
+        await handle_format_pdf(user_id)
+    elif report_type == 'excel':
+        await handle_format_excel(user_id)
+
+
+async def schedule_all_subscriptions():
+    subscriptions = await get_subscriptions_from_db()
+
+    for sub in subscriptions:
+        user_id = sub['user_id']
+        sub_type = sub['subscription_type']
+        time_obj = sub['time']
+        report_type = sub['report_type']
+
+        # Добавляем задачу в планировщик для каждого типа подписки
+        await add_subscription_task(user_id, sub_type, time_obj, report_type)
+
+
+
+async def send_notification(user_id, subscription_type, time_obj):
+    # Отправляем уведомление пользователю
+    message = f"Время для {subscription_type} подписки: {time_obj.strftime('%H:%M')}"
+    await bot.send_message(user_id, message)
+
+
+async def add_subscription_task(user_id, subscription_type, time_obj, report_type):
+    # Для планирования на каждый день в определённое время
+    trigger = CronTrigger(hour=time_obj.hour, minute=time_obj.minute)
+
+    # Добавляем задачу для отправки отчёта
+    scheduler.add_job(send_report, trigger, args=[user_id, subscription_type, report_type], id=str(user_id),
+                      replace_existing=True)
+    scheduler.start()
 
 
 # Обработчик команды /start
@@ -498,12 +578,16 @@ async def unsubscribe(callback_query: CallbackQuery):
             WHERE user_id = $1 AND subscription_type = $2 AND time = $3
         ''', callback_query.from_user.id, subscription_type, time_obj)
 
+        # Останавливаем задачу планировщика для этой подписки
+        scheduler.remove_job(str(callback_query.from_user.id))
+
         await callback_query.message.answer(f"Вы успешно отменили подписку на {subscription_type} в {time_str}.")
     except Exception as e:
         logging.error(f"Failed to unsubscribe: {e}")
         await callback_query.message.answer("Произошла ошибка при удалении подписки. Попробуйте позже.")
     finally:
         await conn.close()
+
 
 
 # Определяем состояния
@@ -572,6 +656,10 @@ async def save_subscription(user_id, sub_type, periodicity, weekday, day_of_mont
         ''', user_id, sub_type, periodicity, weekday, day_of_month, time_obj, timezone_offset, report_type, token)
 
         logging.info(f"Subscription for user {user_id} saved successfully.")
+
+        # Добавляем задачу в планировщик для отправки отчётов
+        await add_subscription_task(user_id, sub_type, time_obj, report_type)
+
     except Exception as e:
         logging.error(f"Failed to save subscription: {e}")
     finally:
@@ -579,15 +667,25 @@ async def save_subscription(user_id, sub_type, periodicity, weekday, day_of_mont
 
 
 async def main() -> None:
-    bot = Bot(token=cf.TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+    # Регистрируем роутеры
     dp.include_router(router)
     setup_routers_select_reports()
     dp.include_router(subscribe_notifications)
     dp.include_router(ai_answer)
+
+    # Удаляем webhook, если был установлен
     await bot.delete_webhook()
+
+    # Запуск планировщика
+    scheduler.start()
+
+    # Планируем отправку всех отчётов на основе подписок
+    await schedule_all_subscriptions()
 
     try:
         logging.info('Бот запущен!')
+        # Запускаем polling для обработки входящих сообщений
         await dp.start_polling(bot)
     except (CancelledError, KeyboardInterrupt, SystemExit):
         dp.shutdown()

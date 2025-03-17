@@ -27,6 +27,7 @@ from src.basic.foodcost_of_products_dishes.graphics_for_pdf import foodcost_of_p
 from src.mailing.notifications.keyboards import get_action_report_markup, get_report_markup, get_format_markup
 
 
+
 subscribe_notifications = Router()
 
 
@@ -57,6 +58,18 @@ async def handle_report_selection(callback_query: CallbackQuery):
         reply_markup=get_action_report_markup(report_type)  # Генерация клавиатуры для выбора действия
     )
 
+
+# Допустимые типы отчётов
+TEXT_REPORT_TYPES = {
+    "text_report_revenue", "text_report_losses", "text_report_purchases",
+    "text_report_food_cost", "text_report_turnover", "text_report_antitheft"
+}
+
+@subscribe_notifications.callback_query(F.data.startswith(tuple(TEXT_REPORT_TYPES)))
+async def report_handler(callback: CallbackQuery):
+    """Обработчик для текстовых и файловых отчётов, отправляет заглушку 'В процессе'"""
+    await callback.message.answer("В процессе...")
+    await callback.answer()  # Закрываем всплывающее уведомление
 
 @subscribe_notifications.callback_query(F.data.startswith('generate_now_'))
 async def handle_generate_now(callback_query: CallbackQuery):
